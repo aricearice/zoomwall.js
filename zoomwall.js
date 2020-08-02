@@ -24,23 +24,27 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+const MAX_DEPTH = 5;
 export var zoomwall = {
-
+  masterNodeId: null,
+  masterNode: null,
   create: function (blocks, enableKeys) {
-    zoomwall.resize(blocks.children);
+    zoomwall.masterNodeId = blocks.id;
+    if (!zoomwall.masterNode) {
+      zoomwall.masterNode = blocks;
+    }
+    zoomwall.recurse(blocks.children, { groupMethod: 'resize' }, 0);
 
     blocks.classList.remove('loading');
-    // shrink blocks if an empty space is clicked
+    // shrink block if an empty space is clicked
     blocks.addEventListener('click', function () {
       if (this.children && this.children.length > 0) {
         zoomwall.shrink(this.children[0]);
       }
     });
 
-    // add click listeners to blocks
-    for (var i = 0; i < blocks.children.length; i++) {
-      blocks.children[i].addEventListener('click', zoomwall.animate);
-    }
+    // add click listeners to imageBlocks
+    zoomwall.recurse(blocks.children, { childMethod: 'animateImages', childTag: 'IMG' }, 0);
 
     // add key down listener
     if (enableKeys) {
@@ -61,7 +65,7 @@ export var zoomwall = {
         switch (e.keyCode) {
         case 27: // escape
           if (elem.children && elem.children.length > 0) {
-            zoomwall.shrink(elem.children[0]);
+            zoomwall.resetAll();
           }
           e.preventDefault();
 
@@ -111,8 +115,7 @@ export var zoomwall = {
     var top = -1;
 
     for (var c = 0; c < blocks.length; c++) {
-      var block = blocks[c];
-
+      const block = blocks[c];
       if (block) {
         if (top == -1) {
           top = block.offsetTop;
@@ -137,23 +140,13 @@ export var zoomwall = {
     block.classList.remove('active');
   },
 
+  resetAll: function() {
+    zoomwall.recurse(zoomwall.masterNode.children, { parentMethod: 'reset', childMethod: 'reset' }, 0);
+  },
+
   shrink: function (block) {
-    block.parentNode.classList.remove('lightbox');
-
-    // reset all blocks
-    zoomwall.reset(block);
-
-    var prev = block.previousElementSibling;
-    while (prev) {
-      zoomwall.reset(prev);
-      prev = prev.previousElementSibling;
-    }
-
-    var next = block.nextElementSibling;
-    while (next) {
-      zoomwall.reset(next);
-      next = next.nextElementSibling;
-    }
+    zoomwall.masterNode.classList.remove('lightbox');
+    zoomwall.resetAll();
 
     // swap images
     if (block.dataset.lowres) {
@@ -167,15 +160,19 @@ export var zoomwall = {
   expand: function (block) {
 
     block.classList.add('active');
-    block.parentNode.classList.add('lightbox');
+
+    if (!zoomwall.masterNode) {
+      zoomwall.masterNode = zoomwall.getMasterNode(this);
+    }
+    zoomwall.masterNode.classList.add('lightbox');
 
     // parent dimensions
-    var parentStyle = window.getComputedStyle(block.parentNode);
+    var parentStyle = window.getComputedStyle(zoomwall.masterNode);
 
     var parentWidth = parseInt(parentStyle.width, 10);
     var parentHeight = parseInt(parentStyle.height, 10);
 
-    var parentTop = block.parentNode.getBoundingClientRect().top;
+    var parentTop = zoomwall.masterNode.getBoundingClientRect().top;
 
     // block dimensions
     var blockStyle = window.getComputedStyle(block);
@@ -232,7 +229,7 @@ export var zoomwall = {
     }
 
     // determine offset
-    var offsetY = parentTop - block.parentNode.offsetTop + block.offsetTop;
+    var offsetY = parentTop - zoomwall.masterNode.offsetTop + block.offsetTop;
 
     if (offsetY > 0) {
       if (parentHeight < window.innerHeight) {
@@ -352,11 +349,59 @@ export var zoomwall = {
     }
   },
 
+
+  animateImages: function(imageBlock) {
+    imageBlock.addEventListener('click', zoomwall.animate);
+  },
+
+  recurse: function(blocks, { parentMethod, childMethod, childTag = 'IMG', groupMethod }, depth = 0) {
+    // groupMethod: performed on the array that holds the element with the tag=childTag we're expecting
+    // parentMethod: performed on the parent element
+    // childMethod: performed on a child element
+    for (var c = 0; c < blocks.length; c++) {
+      const block = blocks[c];
+      if (block) {
+        if (childTag && block.tagName !== childTag) {
+          if (depth > MAX_DEPTH) {
+            continue; // abort?
+          }
+          if (block.children && block.children.length) {
+            if (parentMethod) {
+              zoomwall[parentMethod](block);
+            }
+            zoomwall.recurse(block.children, { parentMethod, childMethod, groupMethod }, ++depth);
+          }
+          continue;
+        } else {
+          depth = 0;
+
+          if (groupMethod) {
+            zoomwall[groupMethod](blocks);
+          }
+          if (childMethod) {
+            zoomwall[childMethod](block);
+          }
+        }
+      }
+    }
+  },
+
+  getMasterNode: function(currentNode) {
+    while (currentNode.id !== zoomwall.masterNodeId) {
+      currentNode = currentNode.parentNode;
+      return zoomwall.getMasterNode(currentNode);
+    }
+    return currentNode;
+  },
+
   animate: function (e) {
     if (this.classList.contains('active')) {
       zoomwall.shrink(this);
     } else {
-      var actives = this.parentNode.getElementsByClassName('active');
+      if (!zoomwall.masterNode) {
+        zoomwall.masterNode = zoomwall.getMasterNode(this);
+      }
+      var actives = zoomwall.masterNode.getElementsByClassName('active');
 
       for (var i = 0; i < actives.length; i++) {
         actives[i].classList.remove('active');
